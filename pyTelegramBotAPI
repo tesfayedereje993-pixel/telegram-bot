@@ -1,0 +1,120 @@
+import telebot
+from telebot import types
+import csv
+import os
+import random
+
+BOT_TOKEN = "8364454250:AAEhcqwygkmp0ObBAnKMJqBHI1GICsY7vWE"
+ADMIN_ID = 1119709428
+
+bot = telebot.TeleBot(BOT_TOKEN)
+user_data = {}
+
+def save_order(data):
+    file_exists = os.path.isfile("orders.csv")
+    with open("orders.csv", mode='a', newline='') as file:
+        writer = csv.writer(file)
+        if not file_exists:
+            writer.writerow(["OrderID", "Name", "Product", "Size", "Price", "Location"])
+        writer.writerow([
+            data["order_id"],
+            data["name"],
+            data["product"],
+            data["size"],
+            data["price"],
+            data["location"]
+        ])
+
+@bot.message_handler(commands=['start'])
+def start(message):
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.add("🪧 Order Signage")
+    bot.send_message(message.chat.id, "Welcome 👋\nClick below to start your order:", reply_markup=markup)
+
+@bot.message_handler(func=lambda msg: msg.text == "🪧 Order Signage")
+def ask_name(message):
+    bot.send_message(message.chat.id, "Enter your name:")
+    bot.register_next_step_handler(message, ask_product)
+
+def ask_product(message):
+    user_data[message.chat.id] = {"name": message.text}
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.add("Banner", "LED Sign", "Sticker")
+    bot.send_message(message.chat.id, "Choose product:", reply_markup=markup)
+    bot.register_next_step_handler(message, ask_size)
+
+def ask_size(message):
+    user_data[message.chat.id]["product"] = message.text
+    bot.send_message(message.chat.id, "Enter size in meters (example: 1 or 2):")
+    bot.register_next_step_handler(message, calculate_price)
+
+def calculate_price(message):
+    try:
+        size = float(message.text)
+    except:
+        bot.send_message(message.chat.id, "❌ Please enter a valid number.")
+        return
+
+    product = user_data[message.chat.id]["product"]
+    prices = {"Banner": 500, "LED Sign": 2000, "Sticker": 300}
+    total_price = size * prices.get(product, 0)
+    order_id = random.randint(1000, 9999)
+
+    user_data[message.chat.id]["size"] = size
+    user_data[message.chat.id]["price"] = total_price
+    user_data[message.chat.id]["order_id"] = order_id
+
+    bot.send_message(message.chat.id, f"💰 Estimated Price: {total_price} ETB")
+
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    location_btn = types.KeyboardButton("📍 Send Location", request_location=True)
+    markup.add(location_btn)
+
+    bot.send_message(message.chat.id, "Send your location:", reply_markup=markup)
+    bot.register_next_step_handler(message, get_location)
+
+def get_location(message):
+    if message.location:
+        user_data[message.chat.id]["location"] = f"{message.location.latitude}, {message.location.longitude}"
+    else:
+        user_data[message.chat.id]["location"] = "Not provided"
+
+    bot.send_message(message.chat.id, "📸 Send your design/logo (or type 'skip'):")
+    bot.register_next_step_handler(message, finish_order)
+
+def finish_order(message):
+    data = user_data[message.chat.id]
+
+    if message.photo:
+        file_id = message.photo[-1].file_id
+        bot.send_photo(ADMIN_ID, file_id)
+
+    save_order(data)
+
+    order_text = f"""
+🆕 NEW ORDER #{data['order_id']}
+👤 Name: {data['name']}
+🪧 Product: {data['product']}
+📏 Size: {data['size']} meter
+💰 Price: {data['price']} ETB
+📍 Location: {data['location']}
+"""
+
+    bot.send_message(ADMIN_ID, order_text)
+    bot.send_message(message.chat.id, "✅ Order completed! We will contact you soon.")
+
+@bot.message_handler(commands=['orders'])
+def view_orders(message):
+    if message.chat.id == ADMIN_ID:
+        try:
+            with open("orders.csv", "r") as file:
+                bot.send_message(message.chat.id, file.read())
+        except:
+            bot.send_message(message.chat.id, "No orders yet.")
+
+@bot.message_handler(commands=['done'])
+def mark_done(message):
+    if message.chat.id == ADMIN_ID:
+        bot.send_message(message.chat.id, "✅ Order marked as completed")
+
+bot.infinity_polling(timeout=10, long_polling_timeout=5)
